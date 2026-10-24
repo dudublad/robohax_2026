@@ -173,6 +173,28 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
     .themePill:active{ transform:translateY(1px); }
 
+    .syncBtn{
+      appearance:none;
+      font:inherit;
+      color:inherit;
+      width:20px;
+      height:18px;
+      padding:0;
+      line-height:1;
+      border-radius:6px;
+      border:1px solid var(--line);
+      background: color-mix(in srgb, var(--card) 70%, transparent);
+      cursor:pointer;
+      -webkit-tap-highlight-color:rgba(0,0,0,0);
+    }
+    .syncBtn:active{ transform:translateY(1px); }
+    .syncPill{ justify-content:space-between; }
+
+    #flipToggle.isFlipped{
+      border-color: rgba(255,170,40,0.55);
+      background: color-mix(in srgb, var(--card) 85%, #FFB020);
+    }
+
     .themePill:focus-visible{
       outline:none;
       box-shadow:0 0 0 3px rgba(47,164,255,0.22), var(--shadow2);
@@ -851,6 +873,16 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
           <span class="themeIcon" aria-hidden="true"></span>
           <span id="themeLabel">Theme: Light</span>
         </button>
+        <button class="themePill" id="flipToggle" type="button" aria-label="Flip drive direction" title="Swap front and back">
+          <span id="flipLabel">Drive: --</span>
+        </button>
+        <div class="pill" id="scoopPill">Scoop: <span id="scoopDeg">--</span>&deg;</div>
+        <div class="pill syncPill" id="syncPill" title="Offset the right scoop servo until both arms sit level. Saved on the robot.">
+          Sync:
+          <button class="syncBtn" id="syncMinus" type="button" aria-label="Sync minus">&minus;</button>
+          <span id="syncDeg">--</span>&deg;
+          <button class="syncBtn" id="syncPlus" type="button" aria-label="Sync plus">+</button>
+        </div>
       </div>
     </div>
 
@@ -936,14 +968,14 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
       <div class="joyWrap">
         <div class="joyStage">
           <button class="triBtn triBtn--tl" id="btnA" aria-label="A"><span>A</span></button>
-          <button class="triBtn triBtn--tr" id="btnB" aria-label="B"><span>B</span></button>
+          <button class="triBtn triBtn--tr" id="btnB" aria-label="Scoop up"><span>&#9650;</span></button>
 
           <div id="joy">
             <div id="knob"></div>
           </div>
 
           <button class="triBtn triBtn--bl" id="btnC" aria-label="C"><span>C</span></button>
-          <button class="triBtn triBtn--br" id="btnD" aria-label="D"><span>D</span></button>
+          <button class="triBtn triBtn--br" id="btnD" aria-label="Scoop down"><span>&#9660;</span></button>
         </div>
       </div>
     </div>
@@ -1372,6 +1404,14 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
         const m = JSON.parse(e.data);
         if(m.type !== "tel") return;
 
+        if(typeof m.flip === "number") setFlipState(m.flip === 1);
+        // Angle + sync only apply to servo scoops; hide them for DC motors
+        const hasAngle = (typeof m.scoop === "number");
+        document.getElementById("scoopPill").style.display = hasAngle ? "" : "none";
+        document.getElementById("syncPill").style.display = hasAngle ? "" : "none";
+        if(hasAngle) document.getElementById("scoopDeg").textContent = m.scoop;
+        if(typeof m.sync === "number") document.getElementById("syncDeg").textContent = (m.sync > 0 ? "+" : "") + m.sync;
+
         const now = performance.now();
 
         try{
@@ -1542,9 +1582,43 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   connectWs();
 
   document.getElementById("btnA").addEventListener("pointerdown", ()=>wsSend({type:"fn", id:"A"}));
-  document.getElementById("btnB").addEventListener("pointerdown", ()=>wsSend({type:"fn", id:"B"}));
   document.getElementById("btnC").addEventListener("pointerdown", ()=>wsSend({type:"fn", id:"C"}));
-  document.getElementById("btnD").addEventListener("pointerdown", ()=>wsSend({type:"fn", id:"D"}));
+
+  // Scoop: hold B (up) / D (down); resend while held so the firmware knows it's still pressed
+  let scoopTimer = null;
+  function scoopStart(dir, e){
+    e.preventDefault();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch(err){}
+    clearInterval(scoopTimer);
+    wsSend({type:"scoop", dir});
+    scoopTimer = setInterval(()=>wsSend({type:"scoop", dir}), 100);
+  }
+  function scoopStop(){
+    if(scoopTimer === null) return;
+    clearInterval(scoopTimer);
+    scoopTimer = null;
+    wsSend({type:"scoop", dir:0});
+  }
+  [["btnB", 1], ["btnD", -1]].forEach(([id, dir])=>{
+    const b = document.getElementById(id);
+    b.addEventListener("pointerdown", (e)=>scoopStart(dir, e));
+    ["pointerup", "pointercancel", "lostpointercapture"].forEach(ev=>b.addEventListener(ev, scoopStop));
+    b.addEventListener("contextmenu", (e)=>e.preventDefault());
+  });
+  window.addEventListener("blur", scoopStop);
+
+  // Scoop sync: 1 degree per tap on the right servo
+  document.getElementById("syncMinus").addEventListener("click", ()=>wsSend({type:"sync", delta:-1}));
+  document.getElementById("syncPlus").addEventListener("click", ()=>wsSend({type:"sync", delta:1}));
+
+  // Drive flip: firmware owns the state and echoes it in telemetry
+  const flipToggle = document.getElementById("flipToggle");
+  const flipLabel  = document.getElementById("flipLabel");
+  function setFlipState(flipped){
+    flipLabel.textContent = flipped ? "Drive: Flipped" : "Drive: Normal";
+    flipToggle.classList.toggle("isFlipped", flipped);
+  }
+  flipToggle.addEventListener("click", (e)=>{ e.preventDefault(); wsSend({type:"flip"}); });
 
   const joy  = document.getElementById("joy");
   const knob = document.getElementById("knob");
