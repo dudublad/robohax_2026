@@ -121,6 +121,8 @@ static const char *FW_VERSION = "LoR Core V3 Web Interface FW - APRIL 2026";
 // ------------------------------
 // Wi-Fi AP config (static 10.0.0.1)
 // ------------------------------
+// 1 = robot broadcasts its Wi-Fi network + web UI; 0 = Wi-Fi off (controller only)
+#define ENABLE_WIFI 0
 static const char *AP_SSID = "Minibot v3 Web Interface";  // CHANGE TO YOUR NAME OF CHOICE
 static const char *AP_PASS = "password";
 
@@ -895,13 +897,17 @@ void setup() {
   serviceLed_();
 
   Serial.println("Motors init...");
-  for (int s = 1; s <= 12; ++s) if (!isScoopSlot_(s)) ConfigureMotorOutput(s, MG90_CR, 90);
+  for (int s = 1; s <= 12; ++s) if (!isScoopSlot_(s)) ConfigureMotorOutput(s, N20Plus, 90);  // drive motors accept 1000-2000us; MG90_CR (500-2500) overshot and stopped them
   g_prefs.begin("scoop", false);
   Scoop_Init();
   Motor_STOP();
 
+#if ENABLE_WIFI
   wifiStartAP_();
   serverStart_();
+#else
+  WiFi.mode(WIFI_OFF);  // no network advertised; frees the radio for Bluetooth
+#endif
 
   BP32.setup(&onGamepadConnected_, &onGamepadDisconnected_);
   BP32.enableVirtualDevice(false);
@@ -920,8 +926,9 @@ void setup() {
 //   R2 / L2 (hold) -> scoop up / down
 //   X (as labeled on the 8BitDo) -> flip drive direction
 // ------------------------------
-static const float DPAD_SPEED_DEFAULT = 0.5f;  // D-pad drive speed at boot (0..1)
-static const float DPAD_SPEED_STEP = 0.1f;     // change per L1/R1 press
+static const float DPAD_SPEED_DEFAULT = 0.6f;  // D-pad drive speed at boot: level 3 of 5
+static const float DPAD_SPEED_STEP = 0.2f;     // 5 levels: 20, 40, 60, 80, 100%
+static const float DPAD_SPEED_MAX = 1.0f;      // top D-pad speed
 static float g_dpadSpeed = DPAD_SPEED_DEFAULT;
 static bool g_gamepadL1Held = false;
 static bool g_gamepadR1Held = false;
@@ -990,7 +997,7 @@ void serviceGamepad_() {
   const bool l1 = g_gamepad->l1();
   const bool r1 = g_gamepad->r1();
   if ((l1 && !g_gamepadL1Held) || (r1 && !g_gamepadR1Held)) {
-    g_dpadSpeed = constrain(g_dpadSpeed + (r1 ? DPAD_SPEED_STEP : -DPAD_SPEED_STEP), DPAD_SPEED_STEP, 1.0f);
+    g_dpadSpeed = constrain(g_dpadSpeed + (r1 ? DPAD_SPEED_STEP : -DPAD_SPEED_STEP), DPAD_SPEED_STEP, DPAD_SPEED_MAX);
     Serial.printf("PAD DPAD speed=%.1f\n", g_dpadSpeed);
   }
   g_gamepadL1Held = l1;
